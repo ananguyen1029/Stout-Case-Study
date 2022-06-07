@@ -1,0 +1,430 @@
+---
+title: "Analyst - Digital & Data Analytics Practice @ Stout - Case Study"
+author: "Thai Nhu Anh Nguyen"
+date: "06/07/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r}
+# Load libraries
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+library(DataExplorer)
+library(randomForest)
+library(usmap)
+library(maps)
+library(caret)
+```
+
+## Case Study 1
+
+Below is a data set that represents thousands of loans made through the Lending Club platform, which is a platform that allows individuals to lend to other individuals.
+
+```{r}
+# Load the dataset
+loans <- read.csv("loans_full_schema.csv", header = TRUE)
+
+# Set Blank to NA
+loans[loans == ""] <- NA
+```
+
+### (A) Describe the dataset and any issues with it.
+
+```{r}
+dim(loans)
+```
+
+The dataset contains 10000 observations and 55 variables. However, there are also a lot of NAs, which will leave us with a dataset of only 203 observations if removing all NAs.
+
+```{r}
+dim(na.omit(loans))
+```
+
+Therefore, I believe it would be reasonable to remove variables containing too many NAs or irrelevant variables first, then removing observations with NA after. Notice that:
+
+* `emp_title` is irrelevant. (REMOVED)
+
+* `emp_length` has 817 NAs. **(KEEP)**
+
+* `debt_to_income` has 24 NAs. **(KEEP)**
+
+* `annual_income_joint` has 8505 NAs. (REMOVED)
+
+* `verification_income_joint` has 8545 NAs. (REMOVED)
+
+* `debt_to_income_joint` has 8505 NAs. (REMOVED)
+
+* `mpnths_since_last_delinq` has 5658 NAs. (REMOVED)
+
+* `months_since_90d_late` has 7715 NAs. (REMOVED)
+
+* `months_since_last_credit_inquiry` has 1271 NAs. **(KEEP)**
+
+* `num_accounts_120d_past_due` has 318 NAs. **(KEEP)**
+
+*(KEEP) because the number of NAs is greater than the mean of total number of NAs (4219)*
+
+```{r}
+output <- c()
+# Calculate number of NAs in each columns
+for (i in 1:ncol(loans)) {
+  output[i] <- length(which(is.na(loans[i])))
+}
+output
+
+# Get the descriptive statistics for number of NAs
+# Since the mean is 4595 (excluding irrelevent variable), I believe 
+# it would be sufficient to remove variables containing 4595 NAs or greater
+summary(output[output != 0 & output != 833])
+```
+
+```{r}
+loans %>%
+  # Remove irrelevant variables or variables containing lots of NAs
+  select(-emp_title, 
+         -annual_income_joint, 
+         -verification_income_joint, 
+         -debt_to_income_joint, 
+         -months_since_last_delinq, 
+         -months_since_90d_late) %>%
+  # Omi NAs
+  drop_na() -> loans
+
+# Get the new dimension
+dim(loans)
+```
+
+The dataset now has 7772 observations and 49 variables.
+
+I divide the dataset into 2 based on loan status
+
+```{r}
+# Retrieve only numeric variables
+loans %>% 
+  select(where(is.numeric), loan_status) -> a
+
+# Calculate the mean
+mean <- as.data.frame(apply(a[, -39], 2, function(x) tapply(x, a$loan_status, mean)))
+mean
+
+# Calculate the minimum values
+min <- as.data.frame(apply(a[, -39], 2, function(x) tapply(x, a$loan_status, min)))
+min
+
+# Calculate the maximum values
+max <- as.data.frame(apply(a[, -39], 2, function(x) tapply(x, a$loan_status, max)))
+max
+
+```
+
+According to the result, most primary statistics such as mean, minimum, and maximum was higher for charged off status than fully paid.
+
+It is also interesting to see that mean annual income for fully paid status is $90198.48, whereas the mean annual income for charged off status was \$94976.00 (we expect a lower number). Meanwhile, the mean debt to income ratio is higher for charge off status (19.52400) compared to fully paid (17.89538), which is reasonable since we expect fully paid group has higher average income, hence more ability to pay off debt. For this reasons, we assume there are numerous outliers that skewed the numbers.
+
+It is also interesting to look at loans divided by terms - 36 months and 60 months.
+
+```{r}
+table(as.factor(loans$loan_status), as.factor(loans$term))
+```
+
+### (B)	Generate a minimum of 5 unique visualizations using the data and write a brief description of your observations. Additionally, all attempts should be made to make the visualizations visually appealing
+
+* Loans Grade
+
+```{r}
+barplot(table(as.factor(loans$grade)),
+        main = "Distribution of Loans by Grades",
+        xlab = "Grade",
+        ylab = "Number of Loans",
+        col = c("#33CC33", "#66FF00", "#CCFF00", "#FFFF00", "#FF9900", "#FF0000"))
+```
+
+We know that loan grades are set based on both the borrower's credit profile and the nature of the contract. 'A' grade loans represent the lowest risk while 'G' grade loans are the riskiest.
+
+According to the graph, most of the loans are at low or acceptable risk, which is a positive result.
+
+* Income Range
+
+```{r}
+copy_loans <- loans
+copy_loans$income_range <- ""
+
+for (i in 1:nrow(copy_loans)) {
+  if (copy_loans[i, 4] <= 30000)
+    copy_loans$income_range[i] <- "<= 30000"
+  else if (copy_loans[i, 4] <= 40000)
+    copy_loans$income_range[i] <- "30000 - 40000"
+  else if (copy_loans[i, 4] <= 50000)
+    copy_loans$income_range[i] <- "40000 - 50000"
+  else if (copy_loans[i, 4] <= 60000)
+    copy_loans$income_range[i] <- "50000 - 60000"
+  else if (copy_loans[i, 4] <= 70000)
+    copy_loans$income_range[i] <- "60000 - 70000"
+  else if (copy_loans[i, 4] <= 80000)
+    copy_loans$income_range[i] <- "70000 - 80000"
+  else if (copy_loans[i, 4] <= 90000)
+    copy_loans$income_range[i] <- "80000 - 90000"
+  else if (copy_loans[i, 4] <= 100000)
+    copy_loans$income_range[i] <- "90000 - 100000"
+  else
+    copy_loans$income_range[i] <- "> 100000"
+}
+
+plot(as.factor(copy_loans$income_range),
+    main = "Distribution of Income Range of Borrowers",
+     xlab = "Income Range",
+     ylab = "Number of Loans",
+     col = c("red", "pink", "orange", "yellow", "green", "blue", "purple", "brown", "black"))
+```
+
+According to the graph, most borrowers have annual income within the range $30,000 - \$40,000
+
+* Relationship between Income Range and Loan Purposes
+
+```{r}
+ggplot(data = copy_loans, mapping = aes(x = loan_purpose, fill = income_range)) +
+  geom_bar() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Ditribution of Loan Purposes by Income Range") +
+  xlab("Loan Purpose") + ylab("Number of Loans")
+```
+
+According to the graph, most loans are for credit card and debt consolidation, of which > $100,000 annual income makes up the most portion.
+
+* Loan Condition
+
+```{r}
+copy_loans$loan_condition <- ""
+
+for (i in 1:nrow(copy_loans)) {
+  if (copy_loans[i, 42] == "Charged Off")
+    copy_loans$loan_condition[i] <- "Loss"
+  else if (copy_loans[i, 42] == "Current")
+    copy_loans$loan_condition[i] <- "Good"
+  else if (copy_loans[i, 42] == "Fully Paid")
+    copy_loans$loan_condition[i] <- "Good"
+  else
+    copy_loans$loan_condition[i] <- "Risky"
+}
+
+barplot(table(as.factor(copy_loans$loan_condition)),
+    main = "Distribution of Loan Condition",
+    xlab = "Condition",
+    ylab = "Number of Loans",
+    col = c("blue1", "red", "orange"))
+```
+
+Most of the loans are in good condition, meaning the platform is safe and the borrowers have high chance to pay back.
+
+* Plot of Correlation
+
+```{r}
+# Plot Correlation Heatmap
+plot_correlation(loans, type = 'continuous',
+                 title = "Correlation of Variables")
+
+a <- loans %>% 
+  select(where(is.numeric))
+# Since the numbers are small, retrieving the correlation
+# cor(a) --- Correlation of all variables
+# cor(a) > 0.5 & cor(a) < 1 --- High correlation only
+# Due to a large number of rows, please view it at your own wish
+```
+
+According to the correlation heatmap, here are some significant highly correlated variables:
+
+* `open_credit_lines` with `total_credit_lines`, `current_installment_accounts`, `num_satisfactory_accounts`, `num_active_debit_accounts`, `num_total_cc_accounts`, `num_open_cc_accounts`, `num_cc_carrying_balance`.
+
+* `total_credit_limit` with `annual_income`, `total_credit_utilized`,  `num_mort_accounts`
+
+* Especially, `interest_rate` with `paid_interest`
+
+The results are reasonable when compared to descriptions in Lending Clubs.
+
+* Plot of Loans by States
+
+```{r}
+us_states <- map_data("state")
+loans %>%
+  mutate(states = state.name[match(state, state.abb)]) %>%
+  mutate(states = str_to_lower(states)) %>%
+  group_by(states) %>%
+  mutate(state_count = n()) %>%
+  select(states, state_count) %>%
+  unique() %>% 
+  ggplot() +
+  geom_map(map = us_states, aes(map_id = states, fill = state_count)) +
+  expand_limits(x = us_states$long, y = us_states$lat)  +
+  labs(title = "Number of Loans by State") 
+```
+
+According to the map, California, Texas, New York, and Florida has the most number of loans.
+
+### (C)	Create a feature set and create a model which predicts interest_rate using at least 2 algorithms. Describe any data cleansing that must be performed and analysis when examining the data.
+
+## Random Forest with all variables
+
+```{r}
+set.seed(1)
+# Generate a random sample
+i.train <- sample(1:nrow(loans), 0.7 * nrow(loans))
+loans.train <- loans[i.train, ]
+loans.test <- loans[-i.train, ]
+```
+
+```{r}
+# 5 fold CV
+control <- trainControl(method='repeatedcv', 
+                        number=5, # 10
+                        repeats=1) # 3
+set.seed(2022)
+
+# Number randomly variable selected is mtry
+mtry <- sqrt(ncol(loans.train))
+tunegrid <- expand.grid(.mtry=mtry)
+rf_mod <- train(interest_rate ~., 
+                      data=loans.train, 
+                      method='rf', 
+                      tuneGrid=tunegrid, 
+                      trControl=control)
+rf_mod
+
+# Predict interest rate using random forest on loans test dataset
+rf_prediction <- predict(rf_mod, subset(loans.test, select = -c(interest_rate)))
+
+# Finding the RMSE
+sqrt(mean((rf_prediction - loans.test$interest_rate)^2))
+```
+
+Since the RMSE (Root Mean Square Error) is a metric that tells us the average distance between the predicted values from the model and the actual values in the dataset, the lower the RMSE, the better the model fits a dataset. Here, the RMSE is 1.25298, which is a relatively low RMSE, meaning Random Forest on all variables is a good fit.
+
+## Random Forest with Only Important Variables
+
+After consideration, I believe Random Forest on Important Variables Selected might give a better RMSE. Thus, I perform Random Forest Variable Selection to pick most important variables that correlate with `interest_rate`.
+
+* Using Random Forest Built-in Function
+
+```{r}
+set.seed(2022)
+# Performing Random Forest Variable Selection
+rf <- randomForest(interest_rate ~., data = loans.train)
+#summary(rf)
+
+# Get the importance of variables in descending level 
+# i.e the first is the least important
+head(importance(rf)[order(importance(rf)), ], 20)
+
+# Now, get only 10 most important variables
+importance(rf)[rev(order(importance(rf))), ][1:10]
+```
+
+* Using Random Forest & Cross Validation
+
+```{r}
+# Variable Importance
+rf_imp <- varImp(rf_mod, scale = TRUE)
+rf_imp
+plot(rf_imp, top = 20)
+```
+
+Both algorithms agree that the most important variables are: **sub grade**, **grade**, **paid_interest**, **term**, **paid_principal**, **total_debit_limit**, **paid_total**, **installment**, **loan_amount**, **balance**
+
+* Perform Random Forest Prediction
+
+```{r}
+# Remove variables to only keep the most important ones 
+included_vars <- c("sub_grade", "grade", "paid_interest", "term", "paid_principal", "total_debit_limit", "paid_total", "installment", "loan_amount", "balance", "interest_rate")
+
+# Update data sets
+loans.test <- loans.test %>% select(included_vars)
+loans.train <- loans.train %>% select(included_vars)
+```
+
+```{r}
+# 5 fold CV
+control <- trainControl(method='repeatedcv', 
+                        number=5, # 10
+                        repeats=1) # 3
+set.seed(2022)
+
+# Number randomly variable selected is mtry
+mtry <- sqrt(ncol(loans.train))
+tunegrid <- expand.grid(.mtry=mtry)
+rf_mod <- train(interest_rate ~., 
+                      data=loans.train, 
+                      method='rf', 
+                      tuneGrid=tunegrid, 
+                      trControl=control)
+rf_mod
+
+# Predict interest rate using random forest on loans test dataset
+rf_prediction <- predict(rf_mod, subset(loans.test, select = -c(interest_rate)))
+
+# Finding the RMSE
+sqrt(mean((rf_prediction - loans.test$interest_rate)^2))
+```
+
+With an RMSE of 1.371707, Random Forest with Important Variables does not beat the Random Forest on all variables.
+
+## Gradient Boosting Machine
+
+* Perform Gradient Boosting Machine on Important Variables
+
+```{r}
+# Fit the model on the training set
+set.seed(1)
+gbm.fit <- train(interest_rate ~., data = loans.test, method = "gbm", trControl = trainControl("cv", number = 10))
+
+# Make predictions on the test data
+gbm.pred <- predict(gbm.fit, loans.test)
+
+# Finding the RMSE
+sqrt(mean((gbm.pred - loans.test$interest_rate)^2))
+```
+
+For this model, I received the RMSE of 0.9486632, which is by far the lowest RMSE.
+
+* Perform Gradient Boosting on Full Variables
+
+```{r}
+set.seed(1)
+# Generate a random sample
+i.train <- sample(1:nrow(loans), 0.7 * nrow(loans))
+loans.train <- loans[i.train, ]
+loans.test <- loans[-i.train, ]
+
+# Fit the model on the training set
+set.seed(1)
+gbm.fit <- train(interest_rate ~., data = loans.test, method = "gbm", trControl = trainControl("cv", number = 10))
+
+# Make predictions on the test data
+gbm.pred <- predict(gbm.fit, loans.test)
+
+# Finding the RMSE
+sqrt(mean((gbm.pred - loans.test$interest_rate)^2))
+```
+With an RMSE of 0.9522241, this model beats Random Forest, however, it is not the best model to predict interest rate.
+
+### (D)	Visualize the test results and propose enhancements to the model, what would you do if you had more time. Also describe assumptions you made and your approach.
+
+```{r}
+table <- matrix(c(0.9522241, 0.9486632, 1.25298, 1.371707), nrow = 2, byrow = T)
+row.names(table) <- c("Gradient Boosting Machine", "Random Forest")
+colnames(table) <- c("w/ All Vars", "w/ Important Vars")
+print(table)
+
+barplot(table, beside = TRUE,
+        main = "RMSE of Random Forest & Gradient Boosting \n
+        with all variables vs. only important variables selected",
+        ylab = "RMSE",
+        col = c("green4", "yellow2"))
+legend(x = "bottomright", 
+       legend = c("Gradient Boosting Machine", "Random Forest"),
+       col = c("green4", "yellow2"),
+       lty = c(1, 1))
+```
+
+Due to time constraint, I am not able to test more models to find the possible lowest RMSE that best fits the dataset. Also, my approaches are possible since I assume NAs are not significant, hence being removed from the dataset. If I had more time, I would perform Missing Values Imputation to replace NAs and take them into account.
